@@ -166,33 +166,22 @@ All times are expressed as UTC+0.
 
 ---
 
-## Using the GPX File in Xcode / Apple Simulator
+## Using the GPX File in Xcode
 
-### Option A — Xcode Scheme *(recommended)*
+Load the GPX via **Xcode → Debug → Simulate Location → Add GPX File to Project…**
 
-This method loads your GPX into the scheme so the Simulator starts replaying immediately when you run the app.
+A Simulator must already be running (or use a physical iPhone launched from Xcode in a debug session — no Simulator needed in that case).
 
-1. In Xcode, go to **Product → Scheme → Edit Scheme…**
-2. Select **Run** on the left, then the **Options** tab
-3. Under **Core Location**, check **Allow Location Simulation**
-4. Set **Default Location** → click the dropdown → **Add GPX File to Project…**
-5. Select your `.gpx` file
-6. Run the app — the Simulator replays the track automatically
+### Workflow for repeated testing
 
-### Option B — Simulator Features Menu
+You do not need unique filenames. Run simgpx to the same output file before each test, then select it in **Debug → Simulate Location** — Xcode picks up the updated file automatically.
 
-This method lets you trigger playback while the app is already running.
+```bash
+# Re-run to the same file each time
+simgpx MyTrip.kml output=test velocity=hike
+```
 
-1. Launch your app in the Simulator
-2. In the Simulator menu bar: **Features → Location → Custom GPX…**
-3. Select your `.gpx` file — playback starts immediately
-
-> **⚠️ Drag & Drop does not work for location simulation.**
-> Dragging a `.gpx` file onto the Simulator window opens the **Files** app inside the Simulator instead of triggering location simulation. Use Option A or B above.
-
-### Replay
-
-To replay a track: stop the app, then re-run it (Option A) or re-select the file via **Features → Location → Custom GPX…** (Option B).
+Then in Xcode: **Debug → Simulate Location → test** (already in the list after first add).
 
 ### Timing
 
@@ -238,6 +227,6 @@ simgpx 40.311200, -105.645900 name="Bear Lake Trailhead" output=~/Desktop/BearLa
 | `✗ KML file not found` | Check the path. Use `./` prefix for files in the current directory |
 | Geocoding returns `unavailable` | No internet connection — supply `name=` and/or `output=` manually |
 | Simulator doesn't move | Ensure the app calls `CLLocationManager.startUpdatingLocation()` and location permission is granted in the Simulator |
-| Simulator shows Files app | Do not drag & drop — use Option A (Scheme) or Option B (Features menu) instead |
+| Simulator shows Files app | Do not drag & drop — use **Debug → Simulate Location** in Xcode instead |
 | Track plays too fast/slow | Adjust `velocity=` — use a preset (`walk`, `hike`, `drive`) or `total:` for exact duration |
 | All points at same location | Your KML may be a Point, not a LineString — simgpx requires a LineString track |
