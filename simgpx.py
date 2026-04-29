@@ -109,60 +109,81 @@ def show_usage():
 def parse_args(argv: list[str]) -> dict:
     """
     Parse command-line arguments into a dict.
-    Handles both key=value params and positional lat/lon coordinates.
+    Processes tokens individually to correctly handle paths, key=value
+    pairs, quoted name values, and lat/lon coordinates.
+
+    Supported token forms:
+      file.kml or /full/path/file.kml   → kml input
+      key=value                          → named parameter
+      key=value with spaces              → name= allows 'name=Bear Lake Hike'
+      -96.851772  40.312012              → lat/lon pair (with or without comma)
     """
     if not argv or argv[0] in ("-h", "--help"):
         show_usage()
 
     result = {
-        "kml": None,
-        "lat": None,
-        "lon": None,
-        "output": None,
-        "name": None,
-        "start": "now+1m",
+        "kml":      None,
+        "lat":      None,
+        "lon":      None,
+        "output":   None,
+        "name":     None,
+        "start":    "now+1m",
         "velocity": "1s",
-        "mode": None,  # "kml" or "gps"
+        "mode":     None,
     }
 
-    # Collect raw tokens — join the full argv so we can handle "LAT, LON"
-    # where the comma may have caused a split
-    raw = " ".join(argv)
+    # Known key=value parameter names
+    KV_KEYS = {"output", "name", "start", "velocity"}
 
-    # Extract key=value params first, removing them from raw
-    kv_pattern = re.compile(r'(\w+)=("(?:[^"\\]|\\.)*"|\S+)')
-    for m in kv_pattern.finditer(raw):
-        key = m.group(1).lower()
-        val = m.group(2).strip('"')
-        if key in result:
+    # First pass: pull out all key=value tokens (handles 'name=Bear Lake Hike'
+    # where the shell passes it as one token because of single-quoting)
+    remaining = []
+    for token in argv:
+        # Strip stray leading commas (e.g. ",  -96.8" after shell split on "LAT, LON")
+        token = token.strip(",").strip()
+        if not token:
+            continue
+
+        m = re.match(r'^(\w+)=(.*)$', token, re.DOTALL)
+        if m and m.group(1).lower() in KV_KEYS:
+            key = m.group(1).lower()
+            val = m.group(2).strip('"').strip("'")
             result[key] = val
-    raw_stripped = kv_pattern.sub("", raw).strip()
+        else:
+            remaining.append(token)
 
-    # What's left should be either a .kml path or two numbers (lat, lon)
-    # Normalise: remove stray commas, collapse whitespace
-    leftover = re.sub(r",", " ", raw_stripped).split()
+    # Second pass: identify kml file or lat/lon from remaining tokens
+    coords = []
+    for token in remaining:
+        # Is it a .kml file path?
+        if token.lower().endswith(".kml"):
+            result["kml"] = os.path.expanduser(token)
+            result["mode"] = "kml"
+            continue
 
-    if not leftover and result["kml"] is None:
-        show_usage()
-
-    if result["kml"] is not None:
-        result["mode"] = "kml"
-    elif len(leftover) == 1 and leftover[0].lower().endswith(".kml"):
-        result["kml"] = leftover[0]
-        result["mode"] = "kml"
-    elif len(leftover) >= 2:
+        # Is it a number (potential lat or lon)?
+        clean = token.strip(",")
         try:
-            result["lat"] = float(leftover[0])
-            result["lon"] = float(leftover[1])
-            result["mode"] = "gps"
+            coords.append(float(clean))
+            continue
         except ValueError:
             pass
-    elif len(leftover) == 1:
-        # Could be a kml path without extension guard
-        candidate = leftover[0]
-        if os.path.isfile(candidate):
-            result["kml"] = candidate
+
+        # Unknown token — check if it's an existing file without .kml extension
+        expanded = os.path.expanduser(token)
+        if os.path.isfile(expanded):
+            result["kml"] = expanded
             result["mode"] = "kml"
+        else:
+            print(f"✗ Unrecognised argument: {token!r}")
+            print("  Run: simgpx --help")
+            sys.exit(1)
+
+    # If we collected two numbers and no kml, treat as lat/lon
+    if result["mode"] is None and len(coords) >= 2:
+        result["lat"] = coords[0]
+        result["lon"] = coords[1]
+        result["mode"] = "gps"
 
     if result["mode"] is None:
         print("✗ Could not determine input type. Pass a .kml file or LAT, LON coordinates.")
@@ -260,30 +281,19 @@ def reverse_geocode(lat: float, lon: float) -> str:
     """
     url = (
         f"https://nominatim.openstreetmap.org/reverse"
-        f"?lat={lat}&lon={lon}&format=json&zoom=10"
+        f"?lat={lat}&lon={lon}&format=json&zoom=14"
     )
     req = urllib.request.Request(url, headers={"User-Agent": "simgpx/1.0"})
     try:
         with urllib.request.urlopen(req, timeout=5) as resp:
             data = json.loads(resp.read().decode())
-
-        # Debug: print full Nominatim response
-        # print("\n── Nominatim raw response ──")
-        # print(json.dumps(data, indent=2))
-        # print("────────────────────────────\n")
-
-        # First choice: the name of the OSM object itself
-        if data.get("name"):
-            return data["name"]
-
-        # Fallback: walk address fields from most to least specific
         addr = data.get("address", {})
+        # Pick most specific useful label (park, suburb, city, etc.)
         for key in ("leisure", "tourism", "natural", "park", "suburb",
                     "neighbourhood", "village", "town", "city", "county", "state"):
             val = addr.get(key)
             if val:
                 return val
-
         return data.get("display_name", "").split(",")[0]
     except Exception:
         return None
